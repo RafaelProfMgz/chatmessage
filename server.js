@@ -9,7 +9,7 @@ const server = http.createServer(app);
 // Configuração do CORS para permitir que o frontend Vue se conecte
 const io = socketIo(server, {
   cors: {
-    origin: "*", // Ou a URL específica do seu frontend Vue, por exemplo, "http://localhost:8080"
+    origin: "https://my-lua-games.vercel.app", // Ou a URL específica do seu frontend Vue, por exemplo, "http://localhost:8080"
     methods: ["GET", "POST"],
   },
 });
@@ -187,4 +187,21 @@ io.on("connection", (socket) => {
 const PORT = process.env.PORT || 3002;
 server.listen(PORT, () => {
   console.log(`Servidor de chat Socket.IO escutando na porta ${PORT}`);
+});
+
+io.on("connection", (socket) => {
+  console.log("a user connected");
+
+  socket.on("disconnect", () => {
+    console.log("user disconnected");
+  });
+
+  // Seus eventos customizados
+  socket.on("registerUser", (userId) => {
+    /* ... */
+  });
+  socket.on("privateMessage", (data) => {
+    /* ... */
+  });
+  // etc.
 });
