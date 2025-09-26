@@ -7,8 +7,6 @@ const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
-
-// --- Caminhos para os arquivos JSON na raiz do projeto ---
 const USERS_FILE = path.join(__dirname, "users.json");
 const CHATS_FILE = path.join(__dirname, "chats.json");
 
@@ -18,7 +16,6 @@ const readDataFromFile = (filePath) => {
   try {
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, "utf-8");
-      // Adiciona verificação para arquivo vazio
       if (data) {
         return JSON.parse(data);
       }
@@ -26,7 +23,7 @@ const readDataFromFile = (filePath) => {
   } catch (error) {
     console.error(`Erro ao ler o arquivo ${filePath}:`, error);
   }
-  return {}; // Retorna um objeto vazio se o arquivo não existir ou der erro
+  return {};
 };
 
 const writeDataToFile = (filePath, data) => {
@@ -39,21 +36,18 @@ const writeDataToFile = (filePath, data) => {
 
 const io = socketIo(server, {
   cors: {
-    origin: "https://my-lua-games.vercel.app", // Altere para seu frontend
+    origin: "https://my-lua-games.vercel.app",
     methods: ["GET", "POST"],
   },
 });
 
-// --- Carregando dados iniciais dos arquivos ---
 let allUsers = readDataFromFile(USERS_FILE);
 let chatHistories = readDataFromFile(CHATS_FILE);
 
-// Objeto para rastrear usuários online (id do usuário -> id do socket)
 const onlineUsers = {};
 
 app.use(express.json());
 
-// Rota para registrar um novo usuário ou fazer login
 app.post("/api/register", (req, res) => {
   const { id, username } = req.body;
   if (!id || !username) {
@@ -80,18 +74,12 @@ app.post("/api/register", (req, res) => {
 });
 
 app.get("/api/users", (req, res) => {
-  // Converte o objeto de usuários em um array
   const usersList = Object.values(allUsers).map((user) => {
-    // Para cada usuário, cria um novo objeto com seus dados
-    // e adiciona a propriedade 'status'
     return {
       ...user,
-      // Verifica se o ID do usuário existe no objeto 'onlineUsers'
       status: onlineUsers.hasOwnProperty(user.id) ? "online" : "offline",
     };
   });
-
-  // Retorna a lista de usuários como JSON
   res.json(usersList);
 });
 
@@ -103,7 +91,7 @@ io.on("connection", (socket) => {
       onlineUsers[userId] = socket.id;
       socket.userId = userId;
       console.log(
-        `[SOCKET] Usuário ${userId} está online com o socket ${socket.id}`
+        `[SOCKET] Usuário ${userId}-${allUsers[userId].username} está online com o socket ${socket.id}`
       );
       io.emit("userStatusUpdate", { userId, status: "online" });
     }
