@@ -188,20 +188,3 @@ const PORT = process.env.PORT || 3002;
 server.listen(PORT, () => {
   console.log(`Servidor de chat Socket.IO escutando na porta ${PORT}`);
 });
-
-io.on("connection", (socket) => {
-  console.log("a user connected");
-
-  socket.on("disconnect", () => {
-    console.log("user disconnected");
-  });
-
-  // Seus eventos customizados
-  socket.on("registerUser", (userId) => {
-    /* ... */
-  });
-  socket.on("privateMessage", (data) => {
-    /* ... */
-  });
-  // etc.
-});
