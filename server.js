@@ -2,102 +2,130 @@ const express = require("express");
 const http = require("http");
 const socketIo = require("socket.io");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const server = http.createServer(app);
 
+// --- Caminhos para os arquivos JSON na raiz do projeto ---
+const USERS_FILE = path.join(__dirname, "users.json");
+const CHATS_FILE = path.join(__dirname, "chats.json");
+
+// --- Funções para ler e escrever nos arquivos ---
+
+const readDataFromFile = (filePath) => {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, "utf-8");
+      // Adiciona verificação para arquivo vazio
+      if (data) {
+        return JSON.parse(data);
+      }
+    }
+  } catch (error) {
+    console.error(`Erro ao ler o arquivo ${filePath}:`, error);
+  }
+  return {}; // Retorna um objeto vazio se o arquivo não existir ou der erro
+};
+
+const writeDataToFile = (filePath, data) => {
+  fs.writeFile(filePath, JSON.stringify(data, null, 2), (err) => {
+    if (err) {
+      console.error(`Erro ao salvar o arquivo ${filePath}:`, err);
+    }
+  });
+};
+
 const io = socketIo(server, {
   cors: {
-    origin: "https://my-lua-games.vercel.app",
+    origin: "https://my-lua-games.vercel.app", // Altere para seu frontend
     methods: ["GET", "POST"],
   },
 });
 
-const users = {};
+// --- Carregando dados iniciais dos arquivos ---
+let allUsers = readDataFromFile(USERS_FILE);
+let chatHistories = readDataFromFile(CHATS_FILE);
 
-const chatHistories = {};
+// Objeto para rastrear usuários online (id do usuário -> id do socket)
+const onlineUsers = {};
 
 app.use(express.json());
 
-app.get("/api/friends", (req, res) => {
-  const sampleFriends = [
-    {
-      id: "user1",
-      name: "Alice",
-      avatar: "https://i.pravatar.cc/150?img=1",
-      status: "online",
-      game: null,
-    },
-    {
-      id: "user2",
-      name: "Bob",
-      avatar: "https://i.pravatar.cc/150?img=2",
-      status: "offline",
-      game: null,
-    },
-    {
-      id: "user3",
-      name: "Charlie",
-      avatar: "https://i.pravatar.cc/150?img=3",
-      status: "online",
-      game: "Valorant",
-    },
-  ];
-  res.json(sampleFriends);
+// Rota para registrar um novo usuário ou fazer login
+app.post("/api/register", (req, res) => {
+  const { id, username } = req.body;
+  if (!id || !username) {
+    return res.status(400).json({ message: "ID e username são obrigatórios." });
+  }
+
+  if (!allUsers[id]) {
+    allUsers[id] = {
+      id,
+      username,
+      friends: [],
+    };
+    writeDataToFile(USERS_FILE, allUsers);
+    console.log(`[API] Novo usuário registrado: ${username} (${id})`);
+  } else {
+    if (allUsers[id].username !== username) {
+      allUsers[id].username = username;
+      writeDataToFile(USERS_FILE, allUsers);
+    }
+    console.log(`[API] Usuário ${username} (${id}) fez login.`);
+  }
+
+  res.status(200).json(allUsers[id]);
 });
 
-function getUserIdBySocketId(socketId) {
-  for (const userId in users) {
-    if (users[userId] === socketId) {
-      return userId;
-    }
-  }
-  return null;
-}
+app.get("/api/users", (req, res) => {
+  // Converte o objeto de usuários em um array
+  const usersList = Object.values(allUsers).map((user) => {
+    // Para cada usuário, cria um novo objeto com seus dados
+    // e adiciona a propriedade 'status'
+    return {
+      ...user,
+      // Verifica se o ID do usuário existe no objeto 'onlineUsers'
+      status: onlineUsers.hasOwnProperty(user.id) ? "online" : "offline",
+    };
+  });
 
-function getSocketIdByUserId(userId) {
-  return users[userId] || null;
-}
+  // Retorna a lista de usuários como JSON
+  res.json(usersList);
+});
 
 io.on("connection", (socket) => {
-  socket.on("registerUser", (userId) => {
-    if (userId && !Object.values(users).includes(socket.id)) {
-      for (const key in users) {
-        if (users[key] === socket.id) {
-          delete users[key];
-          break;
-        }
-      }
-      users[userId] = socket.id;
+  console.log(`[SOCKET] Novo cliente conectado: ${socket.id}`);
+
+  socket.on("userGoesOnline", (userId) => {
+    if (userId) {
+      onlineUsers[userId] = socket.id;
       socket.userId = userId;
-      io.emit("userStatusUpdate", { userId: userId, status: "online" });
-    } else if (userId && users[userId] !== socket.id) {
-      console.warn(
-        `[SOCKET] Conflito: Usuário '${userId}' tentou registrar com socket ${socket.id}, mas já está em ${users[userId]}.`
+      console.log(
+        `[SOCKET] Usuário ${userId} está online com o socket ${socket.id}`
       );
+      io.emit("userStatusUpdate", { userId, status: "online" });
     }
   });
 
-  socket.on("requestChatHistory", ({ userId1, userId2 }) => {
-    const chatId = [userId1, userId2].sort().join("-");
+  socket.on("requestChatHistory", ({ targetUserId }) => {
+    const senderId = socket.userId;
+    if (!senderId) return;
+
+    const chatId = [senderId, targetUserId].sort().join("-");
     const history = chatHistories[chatId] || [];
-    socket.emit("chatHistory", { friendId: userId2, history });
+    socket.emit("chatHistory", { friendId: targetUserId, history });
   });
 
   socket.on("privateMessage", ({ targetUserId, message }) => {
     const senderId = socket.userId;
     if (!senderId) {
-      console.warn(
-        `[SOCKET] Mensagem privada de socket não registrado: ${socket.id}`
-      );
-      socket.emit(
-        "chatError",
-        "Por favor, registre seu ID de usuário primeiro."
-      );
-      return;
+      return socket.emit("chatError", "Usuário não autenticado.");
     }
-
-    const targetSocketId = getSocketIdByUserId(targetUserId);
+    if (!allUsers[targetUserId]) {
+      return socket.emit("chatError", `Usuário '${targetUserId}' não existe.`);
+    }
 
     const messageData = {
       senderId: senderId,
@@ -111,36 +139,37 @@ io.on("connection", (socket) => {
     }
     chatHistories[chatId].push(messageData);
 
+    writeDataToFile(CHATS_FILE, chatHistories);
+
     socket.emit("privateMessageReceived", {
       friendId: targetUserId,
       message: messageData,
     });
 
-    if (targetSocketId && targetSocketId !== socket.id) {
+    const targetSocketId = onlineUsers[targetUserId];
+    if (targetSocketId) {
       io.to(targetSocketId).emit("privateMessageReceived", {
         friendId: senderId,
         message: messageData,
       });
-    } else if (!targetSocketId) {
+    } else {
       console.log(
         `[SOCKET] Usuário '${targetUserId}' offline. Mensagem armazenada.`
-      );
-      socket.emit(
-        "chatError",
-        `Usuário '${targetUserId}' está offline. A mensagem será entregue quando ele se conectar.`
       );
     }
   });
 
   socket.on("disconnect", () => {
     const disconnectedUserId = socket.userId;
-    if (disconnectedUserId && users[disconnectedUserId] === socket.id) {
-      delete users[disconnectedUserId];
+    if (disconnectedUserId && onlineUsers[disconnectedUserId] === socket.id) {
+      delete onlineUsers[disconnectedUserId];
+      console.log(`[SOCKET] Usuário ${disconnectedUserId} ficou offline.`);
       io.emit("userStatusUpdate", {
         userId: disconnectedUserId,
         status: "offline",
       });
     }
+    console.log(`[SOCKET] Cliente desconectado: ${socket.id}`);
   });
 });
 
